@@ -1,0 +1,15 @@
+# Binaries
+/target
+*.exe
+
+# Go
+*.test
+*.out
+
+# Local certs/keys (if ever added)
+*.pem
+*.key
+*.crt
+
+# Editor/OS
+.DS_Store

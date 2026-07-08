@@ -1,0 +1,87 @@
+version: '3'
+
+vars:
+  IMAGE: target:latest
+  E2E_IMAGE: target:e2e
+  E2E_CONTAINER: target-e2e
+  # host:container port publish list, shared by run + e2e.
+  PORTS: >-
+    -p 8081:8081 -p 8082:8082 -p 8443:8443
+    -p 9090:9090 -p 9091:9091 -p 8053:8053/udp
+
+tasks:
+  go:build:
+    desc: Compile all packages
+    cmds:
+      - go build ./...
+
+  go:vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  go:tests:
+    desc: Run tests
+    cmds:
+      - go test ./...
+
+  go:fmt:
+    desc: Format sources
+    cmds:
+      - gofmt -l -w .
+
+  go:tidy:
+    desc: Tidy go.mod
+    cmds:
+      - go mod tidy
+
+  go:run:
+    desc: Run the service (honors TARGET_CONFIG / TARGET_LOG)
+    cmds:
+      - go run .
+
+  docker:build:
+    desc: Build the container image
+    cmds:
+      - docker build -t {{.IMAGE}} .
+
+  docker:run:
+    desc: Run the container in the foreground (Ctrl-C to stop)
+    deps: [docker:build]
+    cmds:
+      - docker run --rm -it {{.PORTS}} --name target -e TARGET_LOG=debug {{.IMAGE}}
+
+  docker:stop:
+    desc: Stop a detached container started by docker:run
+    cmds:
+      - docker rm -f target 2>/dev/null || true
+
+  e2e:
+    desc: Build image, run container, execute the e2e suite against it, tear down
+    cmds:
+      - defer: docker rm -f {{.E2E_CONTAINER}} 2>/dev/null || true
+      - docker build -t {{.E2E_IMAGE}} .
+      - docker rm -f {{.E2E_CONTAINER}} 2>/dev/null || true
+      - docker run -d --name {{.E2E_CONTAINER}} {{.PORTS}} {{.E2E_IMAGE}}
+      # TestMain polls for readiness; no fixed sleep needed.
+      - go test -tags e2e -v -count=1 ./e2e/...
+
+  e2e:remote:
+    desc: 'Run the e2e suite against a deployed backend (set TARGET_E2E_* env vars)'
+    cmds:
+      - go test -tags e2e -v -count=1 ./e2e/...
+
+  build:
+    desc: Alias for go:build
+    cmds:
+      - task: go:build
+
+  vet:
+    desc: Alias for go:vet
+    cmds:
+      - task: go:vet
+
+  tests:
+    desc: Alias for go:tests
+    cmds:
+      - task: go:tests

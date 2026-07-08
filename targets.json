@@ -1,0 +1,33 @@
+{
+    "https-8443": {"http": {
+        "listen": {"ip": "0.0.0.0"},
+        "port": 8443,
+        "cert": {
+            "hostname": "localhost"
+        }
+    }},
+    "http-8081": {"http": {
+        "listen": {"ip": "0.0.0.0"},
+        "port": 8081,
+        "cert": null
+    }},
+    "http-8082": {"http": {
+        "listen": {"ip": "0.0.0.0"},
+        "port": 8082,
+        "cert": null
+    }},
+    "prom-stub": {"tcp": {
+        "listen": {"ip": "0.0.0.0"},
+        "port": 9090,
+        "use_echo": false
+    }},
+    "tcp-echo": {"tcp": {
+        "listen": {"ip": "0.0.0.0"},
+        "port": 9091,
+        "use_echo": true
+    }},
+    "dns-stub": {"udp": {
+        "port": 8053,
+        "use_echo": true
+    }}
+}
