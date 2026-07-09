@@ -18,10 +18,13 @@ package e2e
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -154,6 +157,79 @@ func TestHTTPGenerate(t *testing.T) {
 				t.Fatalf("GET %s: status %d, want %d", url, resp.StatusCode, c.want)
 			}
 		})
+	}
+}
+
+func TestHTTPHealth(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	client := httpClient()
+	for _, p := range []string{"/healthz", "/livez", "/readyz", "/ping", "/status"} {
+		t.Run(p, func(t *testing.T) {
+			url := "http://" + a + p
+			resp, err := client.Get(url)
+			if err != nil {
+				t.Fatalf("GET %s: %v", url, err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("GET %s: status %d, want 200", url, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestHTTPDelay(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	start := time.Now()
+	url := "http://" + a + "/delay/1"
+	resp, err := httpClient().Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: status %d, want 200", url, resp.StatusCode)
+	}
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Fatalf("GET %s returned in %s, want >=~1s", url, elapsed)
+	}
+}
+
+func TestHTTPBytes(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	const want = 2048
+	url := "http://" + a + "/bytes/" + strconv.Itoa(want)
+	resp, err := httpClient().Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if len(body) != want {
+		t.Fatalf("GET %s: got %d bytes, want %d", url, len(body), want)
+	}
+}
+
+func TestHTTPEcho(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	url := "http://" + a + "/echo"
+	resp, err := httpClient().Post(url, "text/plain", strings.NewReader("marco"))
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Method string `json:"method"`
+		Body   string `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode echo: %v", err)
+	}
+	if got.Method != "POST" || got.Body != "marco" {
+		t.Fatalf("echo = %+v, want method=POST body=marco", got)
 	}
 }
 

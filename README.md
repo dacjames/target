@@ -8,12 +8,26 @@ TCP/UDP/HTTP/HTTPS listeners from a declarative `targets.json`.
 
 - **TCP / UDP** listeners that echo whatever is sent (or accept-and-drain when
   `use_echo: false`).
-- **HTTP / HTTPS** endpoints:
-  - `/` → `200 OK`
-  - `/generate_<code>` → forces that HTTP status (`/generate_404` → 404).
+- **HTTP / HTTPS** endpoints (see paths below).
 - **HTTPS** with a supplied cert+key, or an auto-generated in-memory self-signed
   cert (zero setup).
 - Listen on any number of protocols/ports, selected by IP or interface name.
+
+### HTTP paths
+
+| Path                       | Response                                                     |
+| -------------------------- | ----------------------------------------------------------- |
+| `/`                        | `200 OK`                                                     |
+| `/healthz` `/livez` `/readyz` | `200 OK` (k8s-style health checks)                       |
+| `/ping`                    | `pong`                                                       |
+| `/status`                  | JSON: `{status, uptime, uptime_sec}`                        |
+| `/generate_<code>`         | forces that HTTP status (`/generate_404` → 404)             |
+| `/delay/<seconds>`         | sleeps then `200` (fractional ok; capped at 60s)            |
+| `/bytes/<n>`               | `n` bytes of body (capped at 10 MiB) — bandwidth testing    |
+| `/echo`                    | reflects method + headers + body + origin as JSON           |
+| `/headers` `/ip`           | reflect request headers / client IP                         |
+
+Anything else → `404`. Bad path arguments → `400`.
 
 ## Run
 
