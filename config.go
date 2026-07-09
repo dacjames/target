@@ -61,19 +61,24 @@ const defaultBindIP = "0.0.0.0"
 func echoEnabled(p *bool) bool { return p == nil || *p }
 
 // loadConfig reads and parses a targets.json file into a stable-ordered slice
-// of targets. Malformed individual targets are reported via the returned
-// error only when the whole file is unreadable/invalid JSON; per-target type
-// errors are surfaced by returning them so the caller can log-and-skip.
+// of targets.
 func loadConfig(path string) ([]target, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
+	return parseConfig(raw, path)
+}
 
+// parseConfig parses raw targets JSON into a stable-ordered slice of targets.
+// source names the origin (a file path or "$TARGET_CONFIG_JSON") for errors.
+// Structural/JSON problems return an error; the caller decides whether a bad
+// individual target aborts startup.
+func parseConfig(raw []byte, source string) ([]target, error) {
 	// {<name>: {<type>: {<params>}}}
 	var outer map[string]map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &outer); err != nil {
-		return nil, fmt.Errorf("parse config %q: %w", path, err)
+		return nil, fmt.Errorf("parse config %s: %w", source, err)
 	}
 
 	// Stable ordering for deterministic startup/logging.

@@ -25,10 +25,19 @@ TARGET_CONFIG=/etc/targets.json TARGET_LOG=info go run .
 
 ### Environment variables
 
-| Var             | Default        | Meaning                              |
-| --------------- | -------------- | ------------------------------------ |
-| `TARGET_CONFIG` | `targets.json` | Path to the config file.             |
-| `TARGET_LOG`    | `info`         | Log level: debug, info, warn, error. |
+| Var                  | Default        | Meaning                                          |
+| -------------------- | -------------- | ------------------------------------------------ |
+| `TARGET_CONFIG_JSON` | _(unset)_      | Literal targets JSON. Overrides `TARGET_CONFIG`. |
+| `TARGET_CONFIG`      | `targets.json` | Path to the config file.                         |
+| `TARGET_LOG`         | `info`         | Log level: debug, info, warn, error.             |
+
+`TARGET_CONFIG_JSON` takes the same JSON as the file — handy when a file is
+awkward (containers, secrets managers, CI):
+
+```sh
+TARGET_CONFIG_JSON='{"echo":{"tcp":{"port":9091}}}' task go:run
+docker run --rm -p 9091:9091 -e TARGET_CONFIG_JSON='{"echo":{"tcp":{"port":9091}}}' target:latest
+```
 
 ## targets.json
 

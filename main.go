@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	envConfig = "TARGET_CONFIG"
-	envLog    = "TARGET_LOG"
+	envConfig     = "TARGET_CONFIG"      // path to a targets.json file
+	envConfigJSON = "TARGET_CONFIG_JSON" // literal targets JSON (wins over the path)
+	envLog        = "TARGET_LOG"
 
 	defaultConfig = "targets.json"
 	shutdownDrain = 10 * time.Second
@@ -25,18 +26,27 @@ func main() {
 func run() int {
 	lg := newLogger(os.Getenv(envLog))
 
-	configPath := os.Getenv(envConfig)
-	if configPath == "" {
-		configPath = defaultConfig
+	var (
+		targets []target
+		err     error
+		source  string
+	)
+	if raw := os.Getenv(envConfigJSON); raw != "" {
+		source = "$" + envConfigJSON
+		targets, err = parseConfig([]byte(raw), source)
+	} else {
+		source = os.Getenv(envConfig)
+		if source == "" {
+			source = defaultConfig
+		}
+		targets, err = loadConfig(source)
 	}
-
-	targets, err := loadConfig(configPath)
 	if err != nil {
 		lg.errorf("config: %v", err)
 		return 1
 	}
 	if len(targets) == 0 {
-		lg.errorf("config %q defines no targets", configPath)
+		lg.errorf("config %s defines no targets", source)
 		return 1
 	}
 
