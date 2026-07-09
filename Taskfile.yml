@@ -40,6 +40,11 @@ tasks:
     cmds:
       - go run .
 
+  smoke:
+    desc: Boot the service locally and exercise every path (HTTP/HTTPS/TCP/UDP)
+    cmds:
+      - bash scripts/smoke.sh
+
   docker:build:
     desc: Build the container image
     cmds:

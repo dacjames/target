@@ -25,6 +25,14 @@ const (
 // startTime anchors the /status uptime report.
 var startTime = time.Now()
 
+// listenerInfo is the per-listener metadata surfaced by /target.
+type listenerInfo struct {
+	Name      string // target name from targets.json
+	BindIP    string // resolved host this listener bound to (e.g. "0.0.0.0")
+	Port      int
+	Interface string // configured interface name, if any
+}
+
 // startHTTP binds and serves an HTTP or HTTPS target. The returned server is
 // registered for graceful shutdown by the caller.
 func startHTTP(lg *logger, name string, t *HTTPTarget) (*http.Server, error) {
@@ -33,7 +41,9 @@ func startHTTP(lg *logger, name string, t *HTTPTarget) (*http.Server, error) {
 		return nil, err
 	}
 
-	srv := &http.Server{Addr: addr, Handler: handler(lg, name)}
+	bindHost, _, _ := net.SplitHostPort(addr)
+	info := listenerInfo{Name: name, BindIP: bindHost, Port: t.Port, Interface: t.Listen.Interface}
+	srv := &http.Server{Addr: addr, Handler: handler(lg, info)}
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -73,10 +83,10 @@ func startHTTP(lg *logger, name string, t *HTTPTarget) (*http.Server, error) {
 // handler dispatches by path. A single handler (not ServeMux routes) is used
 // because several routes are prefix matches (/generate_, /delay/, /bytes/),
 // which ServeMux only supports for patterns ending in "/". Unmatched → 404.
-func handler(lg *logger, name string) http.HandlerFunc {
+func handler(lg *logger, info listenerInfo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		lg.debugf("target %q %s %s from %s", name, r.Method, path, r.RemoteAddr)
+		lg.debugf("target %q %s %s from %s", info.Name, r.Method, path, r.RemoteAddr)
 		switch {
 		// Prefix routes (ServeMux only prefix-matches trailing-slash patterns,
 		// so dispatch by hand).
@@ -95,6 +105,8 @@ func handler(lg *logger, name string) http.HandlerFunc {
 			fmt.Fprintln(w, "pong")
 		case path == "/status":
 			status(w)
+		case path == "/target":
+			targetInfo(w, r, info)
 
 		// Reflection.
 		case path == "/echo":
@@ -177,6 +189,87 @@ func serveBytes(w http.ResponseWriter, r *http.Request) {
 		}
 		n -= m
 	}
+}
+
+// ifaceInfo describes one network interface for the /target report.
+type ifaceInfo struct {
+	Name      string   `json:"name"`
+	Addresses []string `json:"addresses"`
+}
+
+// targetInfo reports which local address the client actually reached
+// (destination_ip) and the interface(s)/IP(s) this listener is bound on: all
+// interfaces when bound to a wildcard address, otherwise the single interface
+// owning the bind IP.
+func targetInfo(w http.ResponseWriter, r *http.Request, info listenerInfo) {
+	dest := ""
+	if la, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		if h, _, err := net.SplitHostPort(la.String()); err == nil {
+			dest = h
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"target":         info.Name,
+		"destination_ip": dest,
+		"listener": map[string]any{
+			"bind":      info.BindIP,
+			"port":      info.Port,
+			"interface": info.Interface,
+			"wildcard":  isWildcard(info.BindIP),
+		},
+		"interfaces": listenerInterfaces(info.BindIP),
+	})
+}
+
+// isWildcard reports whether host is empty or an unspecified address
+// (0.0.0.0 / ::), i.e. bound to every interface.
+func isWildcard(host string) bool {
+	if host == "" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsUnspecified()
+}
+
+// listenerInterfaces returns the interfaces the listener is reachable on: every
+// interface with an address when bound to a wildcard, otherwise just the one
+// owning bindIP.
+func listenerInterfaces(bindIP string) []ifaceInfo {
+	wildcard := isWildcard(bindIP)
+	var want net.IP
+	if !wildcard {
+		want = net.ParseIP(bindIP)
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	out := make([]ifaceInfo, 0, len(ifaces))
+	for _, ifc := range ifaces {
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		var ips []string
+		owns := false
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ips = append(ips, ipnet.String())
+			if want != nil && ipnet.IP.Equal(want) {
+				owns = true
+			}
+		}
+		if len(ips) == 0 {
+			continue
+		}
+		if wildcard || owns {
+			out = append(out, ifaceInfo{Name: ifc.Name, Addresses: ips})
+		}
+	}
+	return out
 }
 
 // status reports a small liveness JSON with process uptime.

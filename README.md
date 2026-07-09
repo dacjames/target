@@ -21,6 +21,7 @@ TCP/UDP/HTTP/HTTPS listeners from a declarative `targets.json`.
 | `/healthz` `/livez` `/readyz` | `200 OK` (k8s-style health checks)                       |
 | `/ping`                    | `pong`                                                       |
 | `/status`                  | JSON: `{status, uptime, uptime_sec}`                        |
+| `/target`                  | JSON: destination IP the client hit + this listener's interfaces/IPs |
 | `/generate_<code>`         | forces that HTTP status (`/generate_404` → 404)             |
 | `/delay/<seconds>`         | sleeps then `200` (fractional ok; capped at 60s)            |
 | `/bytes/<n>`               | `n` bytes of body (capped at 10 MiB) — bandwidth testing    |
@@ -141,4 +142,5 @@ task go:tests   # go test ./...  (unit; skips e2e)
 task go:fmt     # gofmt -l -w .
 task go:tidy    # go mod tidy
 task go:run     # go run .
+task smoke      # boot locally, curl every HTTP/HTTPS/TCP/UDP path (scripts/smoke.sh)
 ```

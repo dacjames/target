@@ -233,6 +233,36 @@ func TestHTTPEcho(t *testing.T) {
 	}
 }
 
+func TestHTTPTarget(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	url := "http://" + a + "/target"
+	resp, err := httpClient().Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Target        string `json:"target"`
+		DestinationIP string `json:"destination_ip"`
+		Interfaces    []struct {
+			Name      string   `json:"name"`
+			Addresses []string `json:"addresses"`
+		} `json:"interfaces"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode target: %v", err)
+	}
+	if got.Target == "" {
+		t.Errorf("target name empty")
+	}
+	if got.DestinationIP == "" {
+		t.Errorf("destination_ip empty")
+	}
+	if len(got.Interfaces) == 0 {
+		t.Errorf("no interfaces reported")
+	}
+}
+
 func TestHTTPSGenerate(t *testing.T) {
 	a := addr(t, envHTTPS, defHTTPS)
 	url := "https://" + a + "/generate_500"
