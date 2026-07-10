@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -8,6 +9,16 @@ import (
 	"sort"
 	"strconv"
 )
+
+// compactJSON collapses JSON to a single line for logging; returns the trimmed
+// input unchanged if it is not valid JSON.
+func compactJSON(raw []byte) string {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		return string(bytes.TrimSpace(raw))
+	}
+	return buf.String()
+}
 
 // Listen selects where a target binds. Exactly one of IP or Interface is
 // normally set; if both are empty the default bind address (0.0.0.0) is used.

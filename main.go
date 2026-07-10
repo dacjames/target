@@ -26,21 +26,35 @@ func main() {
 func run() int {
 	lg := newLogger(os.Getenv(envLog))
 
+	// Log the config-controlling env vars so a running instance is
+	// self-documenting.
+	lg.infof("env %s=%q", envLog, os.Getenv(envLog))
+	lg.infof("env %s=%q", envConfig, os.Getenv(envConfig))
+	lg.infof("env %s set=%t", envConfigJSON, os.Getenv(envConfigJSON) != "")
+
 	var (
 		targets []target
 		err     error
 		source  string
+		raw     []byte
 	)
-	if raw := os.Getenv(envConfigJSON); raw != "" {
+	if j := os.Getenv(envConfigJSON); j != "" {
 		source = "$" + envConfigJSON
-		targets, err = parseConfig([]byte(raw), source)
+		raw = []byte(j)
 	} else {
 		source = os.Getenv(envConfig)
 		if source == "" {
 			source = defaultConfig
 		}
-		targets, err = loadConfig(source)
+		if raw, err = os.ReadFile(source); err != nil {
+			lg.errorf("config: read %q: %v", source, err)
+			return 1
+		}
 	}
+	lg.infof("config source: %s", source)
+	lg.infof("config: %s", compactJSON(raw))
+
+	targets, err = parseConfig(raw, source)
 	if err != nil {
 		lg.errorf("config: %v", err)
 		return 1

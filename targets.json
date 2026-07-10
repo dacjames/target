@@ -12,7 +12,7 @@
         "cert": null
     }},
     "http-8082": {"http": {
-        "listen": {"ip": "0.0.0.0"},
+        "listen": {"interface": "eth0"},
         "port": 8082,
         "cert": null
     }},
