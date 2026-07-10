@@ -106,6 +106,17 @@ check_contains "GET /target interfaces"      '"name":'           "http://127.0.0
 check_contains "GET /target (lo) wildcard=false" '"wildcard": false'  "http://127.0.0.1:$LO/target"
 check_contains "GET /target (lo) bind"           '"bind": "127.0.0.1"' "http://127.0.0.1:$LO/target"
 
+echo "==> callbacks (self-referential egress)"
+CB="http://127.0.0.1:$HTTP/callback"
+check_contains "http callback ok"   '"ok": true'    "$CB" -X POST -d "{\"kind\":\"http\",\"url\":\"http://127.0.0.1:$HTTP/generate_204\"}"
+check_contains "http callback 204"  '"status": 204' "$CB" -X POST -d "{\"kind\":\"http\",\"url\":\"http://127.0.0.1:$HTTP/generate_204\"}"
+check_contains "tcp callback echo"  '"response": "cb"' "$CB" -X POST -d "{\"kind\":\"tcp\",\"host\":\"127.0.0.1\",\"port\":$TCP,\"data\":\"cb\"}"
+check_contains "udp callback echo"  '"response": "cb"' "$CB" -X POST -d "{\"kind\":\"udp\",\"host\":\"127.0.0.1\",\"port\":$UDP,\"data\":\"cb\"}"
+check_contains "ping callback ok"   '"ok": true'    "$CB" -X POST -d '{"kind":"ping","host":"127.0.0.1","count":1}'
+check_contains "callback failure"   '"ok": false'  "$CB" -X POST -d '{"kind":"tcp","host":"127.0.0.1","port":1}'
+check_status   "callback GET -> 405" 405 "$CB"
+check_status   "callback bad body -> 400" 400 "$CB" -X POST -d 'not json'
+
 echo "==> https"
 check_contains "GET https /"          "OK" "https://127.0.0.1:$HTTPS/"
 check_status   "GET https /generate_500" 500 "https://127.0.0.1:$HTTPS/generate_500"

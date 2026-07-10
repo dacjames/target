@@ -263,6 +263,88 @@ func TestHTTPTarget(t *testing.T) {
 	}
 }
 
+// postCallback fires POST /callback with the given spec and decodes the result.
+func postCallback(t *testing.T, httpAddr, spec string) map[string]any {
+	t.Helper()
+	url := "http://" + httpAddr + "/callback"
+	resp, err := httpClient().Post(url, "application/json", strings.NewReader(spec))
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST %s: status %d, want 200", url, resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode callback result: %v", err)
+	}
+	return out
+}
+
+func TestHTTPCallbackHTTP(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	// The server calls back to its own HTTP endpoint (egress -> ingress).
+	spec := `{"kind":"http","url":"http://` + a + `/generate_204"}`
+	res := postCallback(t, a, spec)
+	if res["ok"] != true {
+		t.Fatalf("http callback not ok: %v", res)
+	}
+	if status, _ := res["status"].(float64); int(status) != 204 {
+		t.Fatalf("http callback status = %v, want 204", res["status"])
+	}
+}
+
+func TestHTTPCallbackTCP(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	tcpAddr := addr(t, envTCP, defTCP)
+	host, port, err := net.SplitHostPort(tcpAddr)
+	if err != nil {
+		t.Fatalf("split %s: %v", tcpAddr, err)
+	}
+	spec := `{"kind":"tcp","host":"` + host + `","port":` + port + `,"data":"cb-e2e"}`
+	res := postCallback(t, a, spec)
+	if res["ok"] != true || res["response"] != "cb-e2e" {
+		t.Fatalf("tcp callback = %v, want ok + echoed data", res)
+	}
+}
+
+func TestHTTPCallbackPing(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	host, _, err := net.SplitHostPort(a)
+	if err != nil {
+		host = a
+	}
+	spec := `{"kind":"ping","host":"` + host + `","count":1}`
+	res := postCallback(t, a, spec)
+	if res["ok"] != true {
+		t.Fatalf("ping callback not ok (needs ping binary + ICMP): %v", res)
+	}
+}
+
+func TestHTTPCallbackErrors(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	url := "http://" + a + "/callback"
+	// GET -> 405
+	if resp, err := httpClient().Get(url); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("GET /callback: status %d, want 405", resp.StatusCode)
+		}
+	} else {
+		t.Errorf("GET /callback: %v", err)
+	}
+	// malformed body -> 400
+	if resp, err := httpClient().Post(url, "application/json", strings.NewReader("not json")); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("POST malformed: status %d, want 400", resp.StatusCode)
+		}
+	} else {
+		t.Errorf("POST malformed: %v", err)
+	}
+}
+
 func TestHTTPSGenerate(t *testing.T) {
 	a := addr(t, envHTTPS, defHTTPS)
 	url := "https://" + a + "/generate_500"

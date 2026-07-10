@@ -107,6 +107,8 @@ func handler(lg *logger, info listenerInfo) http.HandlerFunc {
 			status(w)
 		case path == "/target":
 			targetInfo(w, r, info)
+		case path == "/callback":
+			callback(w, r)
 
 		// Reflection.
 		case path == "/echo":

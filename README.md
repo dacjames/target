@@ -30,6 +30,38 @@ TCP/UDP/HTTP/HTTPS listeners from a declarative `targets.json`.
 
 Anything else → `404`. Bad path arguments → `400`.
 
+### Callbacks (outbound / egress testing)
+
+`POST /callback` makes the service open an **outbound** connection and reports the
+result — the reverse of the listeners above. Useful for webhooks and networks with
+**asymmetric ingress/egress** (reachable but can't reach out, or vice versa): you
+hit ingress, the service exercises egress, you see whether egress works.
+
+The callback is described entirely by the JSON request body (`kind` selects the
+protocol). The response is always `200` with a result body; a failed egress is
+reported as `"ok": false` with an `error`, not an HTTP error.
+
+```sh
+# http — call a webhook / another endpoint
+curl -XPOST localhost:8081/callback \
+  -d '{"kind":"http","method":"POST","url":"https://host/hook","headers":{"X-A":"b"},"body":"hi","insecure":true}'
+
+# tcp / udp — connect to host:port, optionally send data, capture any reply
+curl -XPOST localhost:8081/callback -d '{"kind":"tcp","host":"10.0.0.5","port":9091,"data":"ping"}'
+curl -XPOST localhost:8081/callback -d '{"kind":"udp","host":"10.0.0.5","port":53,"data":"..."}'
+
+# ping — ICMP echo (shells out to the system ping)
+curl -XPOST localhost:8081/callback -d '{"kind":"ping","host":"10.0.0.5","count":3}'
+```
+
+Common fields: `timeout_ms` (default 5000, cap 60000). Result fields by kind:
+`status` (http); `bytes_sent`/`bytes_received`/`response` (tcp/udp);
+`packets_sent`/`packets_received`/`output` (ping); plus `ok`, `latency_ms`, `error`.
+
+> ⚠️ **SSRF by design.** `/callback` makes arbitrary outbound connections from the
+> request body. This is a test target — do not expose it to untrusted callers.
+> ICMP callbacks need a `ping` binary (bundled in the Docker image via `iputils`).
+
 ## Run
 
 ```sh
