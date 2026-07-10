@@ -24,6 +24,10 @@ const (
 	shutdownDrain       = 10 * time.Second
 )
 
+// version is the build version, overridden at release time via
+// -ldflags "-X main.version=<v>". Defaults to "dev" for local builds.
+var version = "dev"
+
 // truthy reports whether an env value enables a flag.
 func truthy(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
@@ -39,6 +43,7 @@ func main() {
 
 func run() int {
 	lg := newLogger(os.Getenv(envLog))
+	lg.infof("target %s", version)
 
 	// Log the config-controlling env vars so a running instance is
 	// self-documenting.

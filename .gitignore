@@ -16,3 +16,6 @@
 
 # Scratch dir for ad-hoc scripts
 /tmp/
+
+# Release artifacts
+/dist/

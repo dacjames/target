@@ -1,6 +1,8 @@
 version: '3'
 
 vars:
+  VERSION: 1.0.0
+  RELEASE_IMAGE: dacjames/target
   IMAGE: target:latest
   E2E_IMAGE: target:e2e
   E2E_CONTAINER: target-e2e
@@ -92,6 +94,34 @@ tasks:
     desc: 'Run the e2e suite against a deployed backend (set TARGET_E2E_* env vars)'
     cmds:
       - go test -tags e2e -v -count=1 ./e2e/...
+
+  release:binaries:
+    desc: Cross-compile release binaries + checksums into dist/ (VERSION={{.VERSION}})
+    cmds:
+      - bash scripts/release.sh {{.VERSION}}
+
+  release:docker:
+    desc: Build + push multi-arch image {{.RELEASE_IMAGE}}:{{.VERSION}} and :latest (needs docker login)
+    cmds:
+      - >-
+        docker buildx build --platform linux/amd64,linux/arm64
+        --build-arg VERSION={{.VERSION}}
+        -t {{.RELEASE_IMAGE}}:{{.VERSION}} -t {{.RELEASE_IMAGE}}:latest
+        --push .
+
+  release:github:
+    desc: Create GitHub release v{{.VERSION}} with the dist/ binaries
+    deps: [release:binaries]
+    cmds:
+      - >-
+        gh release create v{{.VERSION}} dist/target_* dist/SHA256SUMS
+        --title "v{{.VERSION}}" --generate-notes
+
+  release:
+    desc: Full release — binaries + GitHub release + multi-arch image push
+    cmds:
+      - task: release:github
+      - task: release:docker
 
   build:
     desc: Alias for go:build

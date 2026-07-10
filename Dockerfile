@@ -1,13 +1,17 @@
 # syntax=docker/dockerfile:1
 
 # ---- build stage ----
-FROM golang:1.25-alpine AS build
+# Build on the native builder arch, cross-compile to the target arch — fast
+# multi-arch builds without QEMU emulation.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+ARG TARGETOS TARGETARCH VERSION=dev
 WORKDIR /src
 # Manifests first for layer caching (go.sum needed to fetch golang.org/x/net).
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/target .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -ldflags="-s -w -X main.version=$VERSION" -o /out/target .
 
 # ---- run stage ----
 FROM alpine:3.20

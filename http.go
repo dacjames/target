@@ -278,6 +278,7 @@ func listenerInterfaces(bindIP string) []ifaceInfo {
 func status(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":     "ok",
+		"version":    version,
 		"uptime":     time.Since(startTime).Round(time.Second).String(),
 		"uptime_sec": int64(time.Since(startTime).Seconds()),
 	})
