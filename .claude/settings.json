@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(task e2e *)"
+      "Bash(task e2e *)",
+      "Bash(docker buildx *)",
+      "Bash(gh release *)"
     ]
   }
 }

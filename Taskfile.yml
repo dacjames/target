@@ -103,8 +103,12 @@ tasks:
   release:docker:
     desc: Build + push multi-arch image {{.RELEASE_IMAGE}}:{{.VERSION}} and :latest (needs docker login)
     cmds:
+      # Multi-platform needs a docker-container builder (the default docker
+      # driver can't). Create it once, reuse thereafter.
+      - docker buildx inspect target-builder >/dev/null 2>&1 || docker buildx create --name target-builder --driver docker-container
       - >-
-        docker buildx build --platform linux/amd64,linux/arm64
+        docker buildx build --builder target-builder
+        --platform linux/amd64,linux/arm64
         --build-arg VERSION={{.VERSION}}
         -t {{.RELEASE_IMAGE}}:{{.VERSION}} -t {{.RELEASE_IMAGE}}:latest
         --push .

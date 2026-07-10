@@ -5,6 +5,25 @@ standard library plus `golang.org/x/net` (for unprivileged ICMP). Stands up an
 arbitrary number of TCP/UDP/HTTP/HTTPS listeners from a declarative
 `targets.json`.
 
+## Install
+
+**Docker** (multi-arch, amd64 + arm64):
+
+```sh
+docker run --rm -p 8081:8081 dacjames/target:1.0.0   # or :latest
+```
+
+**Prebuilt binary** — grab one from the
+[latest release](https://github.com/dacjames/target/releases/latest)
+(`linux`/`darwin`, `amd64`/`arm64`); verify against `SHA256SUMS`:
+
+```sh
+curl -sSLO https://github.com/dacjames/target/releases/download/v1.0.0/target_1.0.0_linux_amd64
+chmod +x target_1.0.0_linux_amd64 && ./target_1.0.0_linux_amd64
+```
+
+**From source:** `go build .` or `task go:build`.
+
 ## Features
 
 - **TCP / UDP** listeners that echo whatever is sent (or accept-and-drain when
