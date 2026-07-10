@@ -62,6 +62,32 @@ type callbackResult struct {
 	PacketsSent int    `json:"packets_sent,omitempty"`     // ping
 	PacketsRecv int    `json:"packets_received,omitempty"` // ping
 	Output      string `json:"output,omitempty"`           // ping raw output
+
+	timedOut bool // unexported: egress failed specifically due to timeout
+}
+
+// httpStatus maps the egress outcome to the HTTP status /callback returns, so
+// status-aware clients (curl --fail, monitors, CI) react correctly. The full
+// result is always in the body regardless. A completed HTTP callback whose
+// upstream answered 5xx is still ok (we reached it) → 200.
+func (r callbackResult) httpStatus() int {
+	switch {
+	case r.OK:
+		return http.StatusOK // 200
+	case r.timedOut:
+		return http.StatusGatewayTimeout // 504
+	default:
+		return http.StatusBadGateway // 502
+	}
+}
+
+// isTimeout reports whether err is a deadline/timeout (context or net).
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 func (s callbackSpec) timeout() time.Duration {
@@ -136,6 +162,7 @@ func httpCallback(ctx context.Context, spec callbackSpec) callbackResult {
 	res.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
 		res.Error = err.Error()
+		res.timedOut = isTimeout(err)
 		return res
 	}
 	defer resp.Body.Close()
@@ -164,6 +191,7 @@ func streamCallback(ctx context.Context, spec callbackSpec, network string) call
 	if err != nil {
 		res.LatencyMS = time.Since(start).Milliseconds()
 		res.Error = err.Error()
+		res.timedOut = isTimeout(err)
 		return res
 	}
 	defer conn.Close()
@@ -175,6 +203,7 @@ func streamCallback(ctx context.Context, spec callbackSpec, network string) call
 		if err != nil {
 			res.LatencyMS = time.Since(start).Milliseconds()
 			res.Error = err.Error()
+			res.timedOut = isTimeout(err)
 			return res
 		}
 	}
@@ -222,6 +251,7 @@ func pingCallback(ctx context.Context, spec callbackSpec) callbackResult {
 	res.Output = pr.Output
 	if err != nil {
 		res.Error = err.Error()
+		res.timedOut = isTimeout(err)
 		return res
 	}
 	res.OK = pr.Recv > 0
@@ -261,7 +291,7 @@ func callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := runCallback(r.Context(), spec)
-	writeJSON(w, http.StatusOK, res)
+	writeJSON(w, res.httpStatus(), res)
 }
 
 // decodeCallbackSpec reads and decodes a callback spec from a request body,

@@ -22,6 +22,17 @@ curl -sSLO https://github.com/dacjames/target/releases/download/v1.0.0/target_1.
 chmod +x target_1.0.0_linux_amd64 && ./target_1.0.0_linux_amd64
 ```
 
+> **macOS:** downloaded binaries are quarantined by Gatekeeper (they're ad-hoc
+> signed, not notarized), so first strip the quarantine flag — otherwise you get
+> "cannot be opened because the developer cannot be verified":
+>
+> ```sh
+> xattr -d com.apple.quarantine target_1.0.0_darwin_arm64
+> chmod +x target_1.0.0_darwin_arm64 && ./target_1.0.0_darwin_arm64
+> ```
+>
+> Or right-click the binary in Finder → Open, once.
+
 **From source:** `go build .` or `task go:build`.
 
 ## Features
@@ -58,8 +69,20 @@ result — the reverse of the listeners above. Useful for webhooks and networks 
 hit ingress, the service exercises egress, you see whether egress works.
 
 The callback is described entirely by the JSON request body (`kind` selects the
-protocol). The response is always `200` with a result body; a failed egress is
-reported as `"ok": false` with an `error`, not an HTTP error.
+protocol). The HTTP status reflects the egress outcome so status-aware clients
+(`curl --fail`, monitors, CI) react correctly, and the full result is always in
+the JSON body:
+
+| Egress outcome                                   | Status |
+| ------------------------------------------------ | ------ |
+| succeeded (`ok:true`)                            | `200`  |
+| failed — refused / DNS / unreachable / 0 replies | `502`  |
+| timed out                                        | `504`  |
+
+A completed HTTP callback stays `ok:true`/`200` even if the **upstream** answered
+5xx — you reached it; its status is in the body's `status`. Bad request (`400`),
+missing/invalid token (`401`), wrong method (`405`), and auth-disabled (`404`)
+are unchanged.
 
 ```sh
 # http — call a webhook / another endpoint

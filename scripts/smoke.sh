@@ -120,7 +120,8 @@ check_contains "http callback 204"  '"status": 204' "$CB" "${AUTH[@]}" -X POST -
 check_contains "tcp callback echo"  '"response": "cb"' "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"tcp\",\"host\":\"127.0.0.1\",\"port\":$TCP,\"data\":\"cb\"}"
 check_contains "udp callback echo"  '"response": "cb"' "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"udp\",\"host\":\"127.0.0.1\",\"port\":$UDP,\"data\":\"cb\"}"
 check_contains "ping callback ok"   '"ok": true'    "$CB" "${AUTH[@]}" -X POST -d '{"kind":"ping","host":"127.0.0.1","count":1}'
-check_contains "callback failure"   '"ok": false'  "$CB" "${AUTH[@]}" -X POST -d '{"kind":"tcp","host":"127.0.0.1","port":1}'
+check_contains "callback failure body"   '"ok": false'  "$CB" "${AUTH[@]}" -X POST -d '{"kind":"tcp","host":"127.0.0.1","port":1}'
+check_status   "callback failure -> 502"  502 "$CB" "${AUTH[@]}" -X POST -d '{"kind":"tcp","host":"127.0.0.1","port":1}'
 check_status   "callback bad body -> 400" 400 "$CB" "${AUTH[@]}" -X POST -d 'not json'
 
 echo "==> auth enforcement"

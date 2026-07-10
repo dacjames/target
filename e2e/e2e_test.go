@@ -267,9 +267,16 @@ func TestHTTPTarget(t *testing.T) {
 // (the e2e task extracts it from the container logs). Empty ⇒ no auth header.
 const envToken = "TARGET_E2E_TOKEN"
 
-// postCallback fires POST /callback with the given spec and decodes the result,
-// attaching the Bearer token from envToken when set.
+// postCallback fires POST /callback expecting a successful (200) egress result.
 func postCallback(t *testing.T, httpAddr, spec string) map[string]any {
+	t.Helper()
+	return postCallbackExpect(t, httpAddr, spec, http.StatusOK)
+}
+
+// postCallbackExpect fires POST /callback, asserts the HTTP status, and decodes
+// the result. The Bearer token from envToken is attached when set. /callback
+// reflects the egress outcome in the status (200 ok / 502 fail / 504 timeout).
+func postCallbackExpect(t *testing.T, httpAddr, spec string, wantStatus int) map[string]any {
 	t.Helper()
 	url := "http://" + httpAddr + "/callback"
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(spec))
@@ -285,8 +292,8 @@ func postCallback(t *testing.T, httpAddr, spec string) map[string]any {
 		t.Fatalf("POST %s: %v", url, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST %s: status %d, want 200", url, resp.StatusCode)
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("POST %s: status %d, want %d", url, resp.StatusCode, wantStatus)
 	}
 	var out map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -365,6 +372,15 @@ func TestHTTPCallbackErrors(t *testing.T) {
 		}
 	} else {
 		t.Errorf("POST malformed: %v", err)
+	}
+}
+
+func TestHTTPCallbackFailureStatus(t *testing.T) {
+	a := addr(t, envHTTP, defHTTP)
+	// Egress to a refused port -> ok:false, reflected as HTTP 502.
+	res := postCallbackExpect(t, a, `{"kind":"tcp","host":"127.0.0.1","port":1}`, http.StatusBadGateway)
+	if res["ok"] != false {
+		t.Fatalf("expected ok:false for refused connection, got %v", res)
 	}
 }
 
