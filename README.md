@@ -10,7 +10,7 @@ arbitrary number of TCP/UDP/HTTP/HTTPS listeners from a declarative
 **Docker** (multi-arch, amd64 + arm64):
 
 ```sh
-docker run --rm -p 8081:8081 dacjames/target:1.0.0   # or :latest
+docker run --rm -p 8081:8081 dacjames/target:1.1.0   # or :latest
 ```
 
 **Prebuilt binary** — grab one from the
@@ -18,8 +18,8 @@ docker run --rm -p 8081:8081 dacjames/target:1.0.0   # or :latest
 (`linux`/`darwin`, `amd64`/`arm64`); verify against `SHA256SUMS`:
 
 ```sh
-curl -sSLO https://github.com/dacjames/target/releases/download/v1.0.0/target_1.0.0_linux_amd64
-chmod +x target_1.0.0_linux_amd64 && ./target_1.0.0_linux_amd64
+curl -sSLO https://github.com/dacjames/target/releases/download/v1.1.0/target_1.1.0_linux_amd64
+chmod +x target_1.1.0_linux_amd64 && ./target_1.1.0_linux_amd64
 ```
 
 > **macOS:** downloaded binaries are quarantined by Gatekeeper (they're ad-hoc
@@ -27,8 +27,8 @@ chmod +x target_1.0.0_linux_amd64 && ./target_1.0.0_linux_amd64
 > "cannot be opened because the developer cannot be verified":
 >
 > ```sh
-> xattr -d com.apple.quarantine target_1.0.0_darwin_arm64
-> chmod +x target_1.0.0_darwin_arm64 && ./target_1.0.0_darwin_arm64
+> xattr -d com.apple.quarantine target_1.1.0_darwin_arm64
+> chmod +x target_1.1.0_darwin_arm64 && ./target_1.1.0_darwin_arm64
 > ```
 >
 > Or right-click the binary in Finder → Open, once.
