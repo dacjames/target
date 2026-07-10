@@ -62,8 +62,10 @@ check_contains() {
 echo "==> build"
 go build -o "$BIN" .
 
-echo "==> boot"
-TARGET_CONFIG_JSON="$CONFIG" TARGET_LOG=warn "$BIN" >"$LOG" 2>&1 &
+echo "==> boot (auth enabled)"
+# Auth on so /callback is reachable and we can exercise the JWT path. TARGET_LOG
+# must be info so the startup token is logged for capture below.
+TARGET_CONFIG_JSON="$CONFIG" TARGET_LOG=info TARGET_AUTH=true "$BIN" >"$LOG" 2>&1 &
 SVC_PID=$!
 
 # Wait for readiness (or fail fast if the process died).
@@ -74,6 +76,11 @@ for _ in $(seq 1 50); do
   if curl -s -o /dev/null "http://127.0.0.1:$HTTP/healthz"; then break; fi
   sleep 0.1
 done
+
+# Grab the JWT the service logged on startup.
+TOKEN=$(grep 'auth token' "$LOG" | tail -1 | sed 's/.*: //')
+[ -n "$TOKEN" ] && ok "startup token logged" || bad "no auth token in log"
+AUTH=(-H "Authorization: Bearer $TOKEN")
 
 echo "==> health"
 check_status  "GET /"        200 "http://127.0.0.1:$HTTP/"
@@ -106,16 +113,36 @@ check_contains "GET /target interfaces"      '"name":'           "http://127.0.0
 check_contains "GET /target (lo) wildcard=false" '"wildcard": false'  "http://127.0.0.1:$LO/target"
 check_contains "GET /target (lo) bind"           '"bind": "127.0.0.1"' "http://127.0.0.1:$LO/target"
 
-echo "==> callbacks (self-referential egress)"
+echo "==> callbacks (auth'd, self-referential egress)"
 CB="http://127.0.0.1:$HTTP/callback"
-check_contains "http callback ok"   '"ok": true'    "$CB" -X POST -d "{\"kind\":\"http\",\"url\":\"http://127.0.0.1:$HTTP/generate_204\"}"
-check_contains "http callback 204"  '"status": 204' "$CB" -X POST -d "{\"kind\":\"http\",\"url\":\"http://127.0.0.1:$HTTP/generate_204\"}"
-check_contains "tcp callback echo"  '"response": "cb"' "$CB" -X POST -d "{\"kind\":\"tcp\",\"host\":\"127.0.0.1\",\"port\":$TCP,\"data\":\"cb\"}"
-check_contains "udp callback echo"  '"response": "cb"' "$CB" -X POST -d "{\"kind\":\"udp\",\"host\":\"127.0.0.1\",\"port\":$UDP,\"data\":\"cb\"}"
-check_contains "ping callback ok"   '"ok": true'    "$CB" -X POST -d '{"kind":"ping","host":"127.0.0.1","count":1}'
-check_contains "callback failure"   '"ok": false'  "$CB" -X POST -d '{"kind":"tcp","host":"127.0.0.1","port":1}'
-check_status   "callback GET -> 405" 405 "$CB"
-check_status   "callback bad body -> 400" 400 "$CB" -X POST -d 'not json'
+check_contains "http callback ok"   '"ok": true'    "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"http\",\"url\":\"http://127.0.0.1:$HTTP/generate_204\"}"
+check_contains "http callback 204"  '"status": 204' "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"http\",\"url\":\"http://127.0.0.1:$HTTP/generate_204\"}"
+check_contains "tcp callback echo"  '"response": "cb"' "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"tcp\",\"host\":\"127.0.0.1\",\"port\":$TCP,\"data\":\"cb\"}"
+check_contains "udp callback echo"  '"response": "cb"' "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"udp\",\"host\":\"127.0.0.1\",\"port\":$UDP,\"data\":\"cb\"}"
+check_contains "ping callback ok"   '"ok": true'    "$CB" "${AUTH[@]}" -X POST -d '{"kind":"ping","host":"127.0.0.1","count":1}'
+check_contains "callback failure"   '"ok": false'  "$CB" "${AUTH[@]}" -X POST -d '{"kind":"tcp","host":"127.0.0.1","port":1}'
+check_status   "callback bad body -> 400" 400 "$CB" "${AUTH[@]}" -X POST -d 'not json'
+
+echo "==> auth enforcement"
+check_status "callback no token -> 401"  401 "$CB" -X POST -d '{"kind":"ping","host":"127.0.0.1"}'
+check_status "callback bad token -> 401" 401 "$CB" -H "Authorization: Bearer garbage" -X POST -d '{"kind":"ping","host":"127.0.0.1"}'
+check_status "callback authed GET -> 405" 405 "$CB" "${AUTH[@]}"
+# Non-/callback paths need no token even with auth enabled.
+check_status "healthz needs no token" 200 "http://127.0.0.1:$HTTP/healthz"
+
+echo "==> auth disabled -> /callback off"
+# Second short-lived instance with auth off: /callback must 404.
+NOAUTH_PORT=28099
+TARGET_CONFIG_JSON="{\"h\":{\"http\":{\"listen\":{\"ip\":\"127.0.0.1\"},\"port\":$NOAUTH_PORT,\"cert\":null}}}" \
+  TARGET_LOG=warn "$BIN" >"${LOG}.noauth" 2>&1 &
+NOAUTH_PID=$!
+for _ in $(seq 1 50); do
+  curl -s -o /dev/null "http://127.0.0.1:$NOAUTH_PORT/healthz" && break || sleep 0.1
+done
+check_status "callback disabled -> 404" 404 "http://127.0.0.1:$NOAUTH_PORT/callback" -X POST -d '{"kind":"ping","host":"127.0.0.1"}'
+check_status "healthz still open"        200 "http://127.0.0.1:$NOAUTH_PORT/healthz"
+kill "$NOAUTH_PID" 2>/dev/null || true
+rm -f "${LOG}.noauth"
 
 echo "==> https"
 check_contains "GET https /"          "OK" "https://127.0.0.1:$HTTPS/"

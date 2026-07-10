@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # ---- build stage ----
-FROM golang:1.22-alpine AS build
+FROM golang:1.25-alpine AS build
 WORKDIR /src
-# go.mod first for layer caching (stdlib only, so this is a no-op download).
-COPY go.mod ./
+# Manifests first for layer caching (go.sum needed to fetch golang.org/x/net).
+COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/target .

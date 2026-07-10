@@ -13,3 +13,6 @@
 
 # Editor/OS
 .DS_Store
+
+# Scratch dir for ad-hoc scripts
+/tmp/

@@ -263,11 +263,24 @@ func TestHTTPTarget(t *testing.T) {
 	}
 }
 
-// postCallback fires POST /callback with the given spec and decodes the result.
+// envToken carries a Bearer token for /callback when the target has auth enabled
+// (the e2e task extracts it from the container logs). Empty ⇒ no auth header.
+const envToken = "TARGET_E2E_TOKEN"
+
+// postCallback fires POST /callback with the given spec and decodes the result,
+// attaching the Bearer token from envToken when set.
 func postCallback(t *testing.T, httpAddr, spec string) map[string]any {
 	t.Helper()
 	url := "http://" + httpAddr + "/callback"
-	resp, err := httpClient().Post(url, "application/json", strings.NewReader(spec))
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(spec))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := os.Getenv(envToken); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := httpClient().Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
 	}
@@ -325,8 +338,16 @@ func TestHTTPCallbackPing(t *testing.T) {
 func TestHTTPCallbackErrors(t *testing.T) {
 	a := addr(t, envHTTP, defHTTP)
 	url := "http://" + a + "/callback"
-	// GET -> 405
-	if resp, err := httpClient().Get(url); err == nil {
+	tok := os.Getenv(envToken)
+	authed := func(req *http.Request) *http.Request {
+		if tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+		return req
+	}
+	// authenticated GET -> 405
+	getReq, _ := http.NewRequest(http.MethodGet, url, nil)
+	if resp, err := httpClient().Do(authed(getReq)); err == nil {
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Errorf("GET /callback: status %d, want 405", resp.StatusCode)
@@ -334,14 +355,47 @@ func TestHTTPCallbackErrors(t *testing.T) {
 	} else {
 		t.Errorf("GET /callback: %v", err)
 	}
-	// malformed body -> 400
-	if resp, err := httpClient().Post(url, "application/json", strings.NewReader("not json")); err == nil {
+	// authenticated malformed body -> 400
+	postReq, _ := http.NewRequest(http.MethodPost, url, strings.NewReader("not json"))
+	postReq.Header.Set("Content-Type", "application/json")
+	if resp, err := httpClient().Do(authed(postReq)); err == nil {
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("POST malformed: status %d, want 400", resp.StatusCode)
 		}
 	} else {
 		t.Errorf("POST malformed: %v", err)
+	}
+}
+
+// TestHTTPCallbackAuth verifies auth enforcement when a token is configured
+// (i.e. the target has auth enabled). Skipped against an auth-less backend.
+func TestHTTPCallbackAuth(t *testing.T) {
+	if os.Getenv(envToken) == "" {
+		t.Skipf("%s not set; target has no auth", envToken)
+	}
+	a := addr(t, envHTTP, defHTTP)
+	url := "http://" + a + "/callback"
+	spec := `{"kind":"ping","host":"127.0.0.1","count":1}`
+	// No token -> 401.
+	if resp, err := httpClient().Post(url, "application/json", strings.NewReader(spec)); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("no-token POST /callback: status %d, want 401", resp.StatusCode)
+		}
+	} else {
+		t.Errorf("no-token POST: %v", err)
+	}
+	// Bad token -> 401.
+	req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(spec))
+	req.Header.Set("Authorization", "Bearer garbage")
+	if resp, err := httpClient().Do(req); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("bad-token POST /callback: status %d, want 401", resp.StatusCode)
+		}
+	} else {
+		t.Errorf("bad-token POST: %v", err)
 	}
 }
 

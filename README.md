@@ -1,8 +1,9 @@
 # target
 
 A generic **test target** service for network connectivity testing. Pure Go,
-standard library only, zero dependencies. Stands up an arbitrary number of
-TCP/UDP/HTTP/HTTPS listeners from a declarative `targets.json`.
+standard library plus `golang.org/x/net` (for unprivileged ICMP). Stands up an
+arbitrary number of TCP/UDP/HTTP/HTTPS listeners from a declarative
+`targets.json`.
 
 ## Features
 
@@ -50,7 +51,7 @@ curl -XPOST localhost:8081/callback \
 curl -XPOST localhost:8081/callback -d '{"kind":"tcp","host":"10.0.0.5","port":9091,"data":"ping"}'
 curl -XPOST localhost:8081/callback -d '{"kind":"udp","host":"10.0.0.5","port":53,"data":"..."}'
 
-# ping — ICMP echo (shells out to the system ping)
+# ping — ICMP echo (unprivileged ICMP socket; falls back to system ping)
 curl -XPOST localhost:8081/callback -d '{"kind":"ping","host":"10.0.0.5","count":3}'
 ```
 
@@ -60,7 +61,30 @@ Common fields: `timeout_ms` (default 5000, cap 60000). Result fields by kind:
 
 > ⚠️ **SSRF by design.** `/callback` makes arbitrary outbound connections from the
 > request body. This is a test target — do not expose it to untrusted callers.
-> ICMP callbacks need a `ping` binary (bundled in the Docker image via `iputils`).
+> ICMP callbacks default to an **unprivileged ICMP datagram socket** (no root /
+> CAP_NET_RAW; Linux gates it via `net.ipv4.ping_group_range`). If the socket
+> can't be opened they fall back to the system `ping` binary (bundled in the
+> Docker image via `iputils`). Force one impl with `TARGET_PINGER`.
+
+#### Authentication (gating /callback)
+
+Because `/callback` is dangerous, it is the one endpoint that can be locked down.
+Auth is **off by default**:
+
+- **Auth off** → `/callback` is disabled (returns `404`). Everything else works.
+- **Auth on** (`TARGET_AUTH=true`) → `/callback` requires `Authorization: Bearer
+  <jwt>`. No other endpoint is gated.
+
+The service issues its own tokens with an **ephemeral Ed25519 key** generated at
+startup (EdDSA JWT, `sub=1`), logs one on boot, and logs a fresh one every
+lifetime/2 so a valid token is always in recent logs. Tokens die on restart.
+
+```sh
+TARGET_AUTH=true task go:run
+# ... log: auth token (expires 2026-07-10T20:00:00Z): eyJhbGciOiJFZERTQS...
+curl -XPOST localhost:8081/callback -H "Authorization: Bearer eyJhbGc..." \
+  -d '{"kind":"ping","host":"10.0.0.5","count":3}'
+```
 
 ## Run
 
@@ -77,6 +101,9 @@ TARGET_CONFIG=/etc/targets.json TARGET_LOG=info go run .
 | `TARGET_CONFIG_JSON` | _(unset)_      | Literal targets JSON. Overrides `TARGET_CONFIG`. |
 | `TARGET_CONFIG`      | `targets.json` | Path to the config file.                         |
 | `TARGET_LOG`         | `info`         | Log level: debug, info, warn, error.             |
+| `TARGET_PINGER`      | `auto`         | ICMP impl: `auto` (socket, fall back to ping), `socket`, or `system`. |
+| `TARGET_AUTH`        | off            | `true`/`1`/`yes` enables JWT auth on `/callback`. |
+| `TARGET_AUTH_LIFETIME` | `4h`         | Token lifetime (`time.ParseDuration`). Rotates at lifetime/2. |
 
 `TARGET_CONFIG_JSON` takes the same JSON as the file — handy when a file is
 awkward (containers, secrets managers, CI):

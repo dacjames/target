@@ -40,10 +40,23 @@ tasks:
     cmds:
       - go run .
 
+  check:
+    desc: Dev loop — build, vet, format-check, test
+    cmds:
+      - go build ./...
+      - go vet ./...
+      - gofmt -l .
+      - go test ./...
+
   smoke:
     desc: Boot the service locally and exercise every path (HTTP/HTTPS/TCP/UDP)
     cmds:
       - bash scripts/smoke.sh
+
+  ping:check:
+    desc: Verify the ICMP callback across every TARGET_PINGER impl (socket/system/auto)
+    cmds:
+      - bash scripts/ping-check.sh
 
   docker:build:
     desc: Build the container image
@@ -62,14 +75,18 @@ tasks:
       - docker rm -f target 2>/dev/null || true
 
   e2e:
-    desc: Build image, run container, execute the e2e suite against it, tear down
+    desc: Build image, run container (auth on), execute the e2e suite against it, tear down
     cmds:
       - defer: docker rm -f {{.E2E_CONTAINER}} 2>/dev/null || true
       - docker build -t {{.E2E_IMAGE}} .
       - docker rm -f {{.E2E_CONTAINER}} 2>/dev/null || true
-      - docker run -d --name {{.E2E_CONTAINER}} {{.PORTS}} {{.E2E_IMAGE}}
-      # TestMain polls for readiness; no fixed sleep needed.
-      - go test -tags e2e -v -count=1 ./e2e/...
+      # Auth on so /callback is exercised end-to-end; grab the logged token.
+      - docker run -d --name {{.E2E_CONTAINER}} {{.PORTS}} -e TARGET_AUTH=true {{.E2E_IMAGE}}
+      - |
+        for _ in $(seq 1 50); do curl -sf -o /dev/null http://localhost:8081/healthz && break || sleep 0.2; done
+        TOKEN=$(docker logs {{.E2E_CONTAINER}} 2>&1 | grep 'auth token' | tail -1 | sed 's/.*: //')
+        echo "e2e auth token: ${TOKEN:0:24}..."
+        TARGET_E2E_TOKEN="$TOKEN" go test -tags e2e -v -count=1 ./e2e/...
 
   e2e:remote:
     desc: 'Run the e2e suite against a deployed backend (set TARGET_E2E_* env vars)'

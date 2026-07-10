@@ -1,4 +1,5 @@
 *
 !*.go
 !go.mod
+!go.sum
 !targets.json

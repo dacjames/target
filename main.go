@@ -6,18 +6,32 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
 
 const (
-	envConfig     = "TARGET_CONFIG"      // path to a targets.json file
-	envConfigJSON = "TARGET_CONFIG_JSON" // literal targets JSON (wins over the path)
-	envLog        = "TARGET_LOG"
+	envConfig       = "TARGET_CONFIG"      // path to a targets.json file
+	envConfigJSON   = "TARGET_CONFIG_JSON" // literal targets JSON (wins over the path)
+	envLog          = "TARGET_LOG"
+	envPinger       = "TARGET_PINGER"        // ping impl: auto (default) | socket | system
+	envAuth         = "TARGET_AUTH"          // truthy enables JWT auth on /callback
+	envAuthLifetime = "TARGET_AUTH_LIFETIME" // token lifetime (time.ParseDuration)
 
-	defaultConfig = "targets.json"
-	shutdownDrain = 10 * time.Second
+	defaultConfig       = "targets.json"
+	defaultAuthLifetime = 4 * time.Hour
+	shutdownDrain       = 10 * time.Second
 )
+
+// truthy reports whether an env value enables a flag.
+func truthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
 
 func main() {
 	os.Exit(run())
@@ -31,6 +45,9 @@ func run() int {
 	lg.infof("env %s=%q", envLog, os.Getenv(envLog))
 	lg.infof("env %s=%q", envConfig, os.Getenv(envConfig))
 	lg.infof("env %s set=%t", envConfigJSON, os.Getenv(envConfigJSON) != "")
+	lg.infof("env %s=%q", envPinger, os.Getenv(envPinger))
+
+	defaultPinger = selectPinger(os.Getenv(envPinger), lg)
 
 	var (
 		targets []target
@@ -66,6 +83,28 @@ func run() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Optional JWT auth. When enabled it gates /callback; when disabled,
+	// /callback is turned off (see callback.go).
+	if truthy(os.Getenv(envAuth)) {
+		lifetime := defaultAuthLifetime
+		if v := os.Getenv(envAuthLifetime); v != "" {
+			lifetime, err = time.ParseDuration(v)
+			if err != nil || lifetime <= 0 {
+				lg.errorf("auth: invalid %s=%q: %v", envAuthLifetime, v, err)
+				return 1
+			}
+		}
+		authenticator, err = newAuthenticator(lifetime)
+		if err != nil {
+			lg.errorf("auth: %v", err)
+			return 1
+		}
+		lg.infof("auth enabled (lifetime %s); /callback requires a Bearer token", lifetime)
+		go authenticator.rotate(ctx, lg)
+	} else {
+		lg.infof("auth disabled; /callback endpoint disabled")
+	}
 
 	var closers []io.Closer    // listeners / packet conns
 	var servers []*http.Server // http(s) servers
