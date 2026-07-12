@@ -108,14 +108,18 @@ Common fields: `timeout_ms` (default 5000, cap 60000). Result fields by kind:
 > can't be opened they fall back to the system `ping` binary (bundled in the
 > Docker image via `iputils`). Force one impl with `TARGET_PINGER`.
 
-#### Authentication (gating /callback)
+#### Authentication (gating HTTP/HTTPS)
 
-Because `/callback` is dangerous, it is the one endpoint that can be locked down.
-Auth is **off by default**:
+Auth is **off by default**. When on, it gates **every** route on the HTTP/HTTPS
+listeners — health/liveness probes excepted, so orchestrators keep working.
+`/callback` is special: its auth is **mandatory**, so it is disabled entirely
+when auth is off.
 
-- **Auth off** → `/callback` is disabled (returns `404`). Everything else works.
-- **Auth on** (`TARGET_AUTH=true`) → `/callback` requires `Authorization: Bearer
-  <jwt>`. No other endpoint is gated.
+| Route | Auth off | Auth on (`TARGET_AUTH=true`) |
+| --- | --- | --- |
+| Health probes (`/`, `/healthz`, `/livez`, `/readyz`, `/ping`) | open | **open** (exempt) |
+| Everything else (`/status`, `/target`, `/echo`, `/generate_*`, …) | open | `401` without a valid `Authorization: Bearer <jwt>` |
+| `/callback` | **`404` (disabled)** | `401` without a valid Bearer token |
 
 The service issues its own tokens with an **ephemeral Ed25519 key** generated at
 startup (EdDSA JWT, `sub=1`), logs one on boot, and logs a fresh one every
@@ -144,7 +148,7 @@ TARGET_CONFIG=/etc/targets.json TARGET_LOG=info go run .
 | `TARGET_CONFIG`      | `targets.json` | Path to the config file.                         |
 | `TARGET_LOG`         | `info`         | Log level: debug, info, warn, error.             |
 | `TARGET_PINGER`      | `auto`         | ICMP impl: `auto` (socket, fall back to ping), `socket`, or `system`. |
-| `TARGET_AUTH`        | off            | `true`/`1`/`yes` enables JWT auth on `/callback`. |
+| `TARGET_AUTH`        | off            | `true`/`1`/`yes` enables JWT auth on all HTTP routes (health probes exempt; `/callback` mandatory). |
 | `TARGET_AUTH_LIFETIME` | `4h`         | Token lifetime (`time.ParseDuration`). Rotates at lifetime/2. |
 
 `TARGET_CONFIG_JSON` takes the same JSON as the file — handy when a file is

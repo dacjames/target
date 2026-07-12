@@ -75,6 +75,37 @@ func httpClient() *http.Client {
 	}
 }
 
+// withAuth attaches the Bearer token from envToken when the target has auth
+// enabled (token set). A no-op against an auth-less backend, so the same suite
+// works both ways.
+func withAuth(req *http.Request) *http.Request {
+	if tok := os.Getenv(envToken); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	return req
+}
+
+// authGet issues a GET with the auth token attached when configured.
+func authGet(t *testing.T, client *http.Client, url string) (*http.Response, error) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new request %s: %v", url, err)
+	}
+	return client.Do(withAuth(req))
+}
+
+// authPost issues a POST with the auth token attached when configured.
+func authPost(t *testing.T, client *http.Client, url, ctype string, body io.Reader) (*http.Response, error) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, body)
+	if err != nil {
+		t.Fatalf("new request %s: %v", url, err)
+	}
+	req.Header.Set("Content-Type", ctype)
+	return client.Do(withAuth(req))
+}
+
 // TestMain best-effort waits for the HTTP endpoint to come up (container
 // startup race) before running the suite. Non-fatal: individual tests assert.
 func TestMain(m *testing.M) {
@@ -148,7 +179,7 @@ func TestHTTPGenerate(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.path, func(t *testing.T) {
 			url := "http://" + a + c.path
-			resp, err := client.Get(url)
+			resp, err := authGet(t, client, url)
 			if err != nil {
 				t.Fatalf("GET %s: %v", url, err)
 			}
@@ -166,7 +197,9 @@ func TestHTTPHealth(t *testing.T) {
 	for _, p := range []string{"/healthz", "/livez", "/readyz", "/ping", "/status"} {
 		t.Run(p, func(t *testing.T) {
 			url := "http://" + a + p
-			resp, err := client.Get(url)
+			// /status is auth-gated; probes are exempt. authGet attaches the
+			// token when configured, so all pass whether auth is on or off.
+			resp, err := authGet(t, client, url)
 			if err != nil {
 				t.Fatalf("GET %s: %v", url, err)
 			}
@@ -182,7 +215,7 @@ func TestHTTPDelay(t *testing.T) {
 	a := addr(t, envHTTP, defHTTP)
 	start := time.Now()
 	url := "http://" + a + "/delay/1"
-	resp, err := httpClient().Get(url)
+	resp, err := authGet(t, httpClient(), url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -199,7 +232,7 @@ func TestHTTPBytes(t *testing.T) {
 	a := addr(t, envHTTP, defHTTP)
 	const want = 2048
 	url := "http://" + a + "/bytes/" + strconv.Itoa(want)
-	resp, err := httpClient().Get(url)
+	resp, err := authGet(t, httpClient(), url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -216,7 +249,7 @@ func TestHTTPBytes(t *testing.T) {
 func TestHTTPEcho(t *testing.T) {
 	a := addr(t, envHTTP, defHTTP)
 	url := "http://" + a + "/echo"
-	resp, err := httpClient().Post(url, "text/plain", strings.NewReader("marco"))
+	resp, err := authPost(t, httpClient(), url, "text/plain", strings.NewReader("marco"))
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
 	}
@@ -236,7 +269,7 @@ func TestHTTPEcho(t *testing.T) {
 func TestHTTPTarget(t *testing.T) {
 	a := addr(t, envHTTP, defHTTP)
 	url := "http://" + a + "/target"
-	resp, err := httpClient().Get(url)
+	resp, err := authGet(t, httpClient(), url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -304,8 +337,14 @@ func postCallbackExpect(t *testing.T, httpAddr, spec string, wantStatus int) map
 
 func TestHTTPCallbackHTTP(t *testing.T) {
 	a := addr(t, envHTTP, defHTTP)
-	// The server calls back to its own HTTP endpoint (egress -> ingress).
-	spec := `{"kind":"http","url":"http://` + a + `/generate_204"}`
+	// The server calls back to its own HTTP endpoint (egress -> ingress). That
+	// ingress route is auth-gated, so the spec carries the token in its own
+	// request headers when auth is enabled.
+	hdrs := ""
+	if tok := os.Getenv(envToken); tok != "" {
+		hdrs = `,"headers":{"Authorization":"Bearer ` + tok + `"}`
+	}
+	spec := `{"kind":"http","url":"http://` + a + `/generate_204"` + hdrs + `}`
 	res := postCallback(t, a, spec)
 	if res["ok"] != true {
 		t.Fatalf("http callback not ok: %v", res)
@@ -415,10 +454,53 @@ func TestHTTPCallbackAuth(t *testing.T) {
 	}
 }
 
+// TestHTTPGlobalAuth verifies auth gates non-callback routes too, while
+// health/liveness probes stay open. Skipped against an auth-less backend.
+func TestHTTPGlobalAuth(t *testing.T) {
+	tok := os.Getenv(envToken)
+	if tok == "" {
+		t.Skipf("%s not set; target has no auth", envToken)
+	}
+	a := addr(t, envHTTP, defHTTP)
+
+	// Non-callback route: 401 without a token.
+	statusURL := "http://" + a + "/status"
+	if resp, err := httpClient().Get(statusURL); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("no-token GET /status: status %d, want 401", resp.StatusCode)
+		}
+	} else {
+		t.Errorf("no-token GET /status: %v", err)
+	}
+
+	// Non-callback route: 200 with a valid token.
+	req, _ := http.NewRequest(http.MethodGet, statusURL, nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	if resp, err := httpClient().Do(req); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("token GET /status: status %d, want 200", resp.StatusCode)
+		}
+	} else {
+		t.Errorf("token GET /status: %v", err)
+	}
+
+	// Health probe: open without a token.
+	if resp, err := httpClient().Get("http://" + a + "/healthz"); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("no-token GET /healthz: status %d, want 200 (exempt)", resp.StatusCode)
+		}
+	} else {
+		t.Errorf("no-token GET /healthz: %v", err)
+	}
+}
+
 func TestHTTPSGenerate(t *testing.T) {
 	a := addr(t, envHTTPS, defHTTPS)
 	url := "https://" + a + "/generate_500"
-	resp, err := httpClient().Get(url)
+	resp, err := authGet(t, httpClient(), url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}

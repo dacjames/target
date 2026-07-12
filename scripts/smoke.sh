@@ -82,41 +82,52 @@ TOKEN=$(grep 'auth token' "$LOG" | tail -1 | sed 's/.*: //')
 [ -n "$TOKEN" ] && ok "startup token logged" || bad "no auth token in log"
 AUTH=(-H "Authorization: Bearer $TOKEN")
 
-echo "==> health"
+# With auth enabled, health/liveness probes stay open but every other route
+# needs the Bearer token — so most checks below pass "${AUTH[@]}".
+echo "==> health (probes exempt, no token)"
 check_status  "GET /"        200 "http://127.0.0.1:$HTTP/"
 check_status  "GET /healthz" 200 "http://127.0.0.1:$HTTP/healthz"
 check_status  "GET /livez"   200 "http://127.0.0.1:$HTTP/livez"
 check_status  "GET /readyz"  200 "http://127.0.0.1:$HTTP/readyz"
 check_contains "GET /ping"   "pong"          "http://127.0.0.1:$HTTP/ping"
-check_contains "GET /status" '"status": "ok"' "http://127.0.0.1:$HTTP/status"
+check_contains "GET /status" '"status": "ok"' "http://127.0.0.1:$HTTP/status" "${AUTH[@]}"
+
+echo "==> global auth gating (non-health routes need a token)"
+check_status "GET /status no token -> 401" 401 "http://127.0.0.1:$HTTP/status"
+check_status "GET /status token -> 200"    200 "http://127.0.0.1:$HTTP/status" "${AUTH[@]}"
+check_status "GET /echo no token -> 401"   401 "http://127.0.0.1:$HTTP/echo"
+check_status "GET /target no token -> 401" 401 "http://127.0.0.1:$HTTP/target"
 
 echo "==> generate"
-check_status "GET /generate_404" 404 "http://127.0.0.1:$HTTP/generate_404"
-check_status "GET /generate_503" 503 "http://127.0.0.1:$HTTP/generate_503"
-check_status "GET /generate_xyz" 400 "http://127.0.0.1:$HTTP/generate_xyz"
-check_status "GET /nope (404)"   404 "http://127.0.0.1:$HTTP/nope"
+check_status "GET /generate_404" 404 "http://127.0.0.1:$HTTP/generate_404" "${AUTH[@]}"
+check_status "GET /generate_503" 503 "http://127.0.0.1:$HTTP/generate_503" "${AUTH[@]}"
+check_status "GET /generate_xyz" 400 "http://127.0.0.1:$HTTP/generate_xyz" "${AUTH[@]}"
+check_status "GET /nope (404)"   404 "http://127.0.0.1:$HTTP/nope" "${AUTH[@]}"
 
 echo "==> behavior"
 start=$(date +%s%N)
-check_status "GET /delay/1" 200 "http://127.0.0.1:$HTTP/delay/1"
+check_status "GET /delay/1" 200 "http://127.0.0.1:$HTTP/delay/1" "${AUTH[@]}"
 elapsed_ms=$(( ($(date +%s%N) - start) / 1000000 ))
 [ "$elapsed_ms" -ge 900 ] && ok "delay honored (${elapsed_ms}ms)" || bad "delay too fast (${elapsed_ms}ms)"
-n=$(curl -s "http://127.0.0.1:$HTTP/bytes/2048" | wc -c | tr -d ' ')
+n=$(curl -s "${AUTH[@]}" "http://127.0.0.1:$HTTP/bytes/2048" | wc -c | tr -d ' ')
 [ "$n" = "2048" ] && ok "bytes length ($n)" || bad "bytes: got $n want 2048"
-check_contains "POST /echo body" '"body": "marco"'  "http://127.0.0.1:$HTTP/echo" -X POST -d marco
-check_contains "POST /echo method" '"method": "POST"' "http://127.0.0.1:$HTTP/echo" -X POST -d marco
+check_contains "POST /echo body" '"body": "marco"'  "http://127.0.0.1:$HTTP/echo" "${AUTH[@]}" -X POST -d marco
+check_contains "POST /echo method" '"method": "POST"' "http://127.0.0.1:$HTTP/echo" "${AUTH[@]}" -X POST -d marco
 
 echo "==> target info"
-check_contains "GET /target destination_ip" '"destination_ip": "127.0.0.1"' "http://127.0.0.1:$HTTP/target"
-check_contains "GET /target wildcard=true"   '"wildcard": true'  "http://127.0.0.1:$HTTP/target"
-check_contains "GET /target interfaces"      '"name":'           "http://127.0.0.1:$HTTP/target"
-check_contains "GET /target (lo) wildcard=false" '"wildcard": false'  "http://127.0.0.1:$LO/target"
-check_contains "GET /target (lo) bind"           '"bind": "127.0.0.1"' "http://127.0.0.1:$LO/target"
+check_contains "GET /target destination_ip" '"destination_ip": "127.0.0.1"' "http://127.0.0.1:$HTTP/target" "${AUTH[@]}"
+check_contains "GET /target wildcard=true"   '"wildcard": true'  "http://127.0.0.1:$HTTP/target" "${AUTH[@]}"
+check_contains "GET /target interfaces"      '"name":'           "http://127.0.0.1:$HTTP/target" "${AUTH[@]}"
+check_contains "GET /target (lo) wildcard=false" '"wildcard": false'  "http://127.0.0.1:$LO/target" "${AUTH[@]}"
+check_contains "GET /target (lo) bind"           '"bind": "127.0.0.1"' "http://127.0.0.1:$LO/target" "${AUTH[@]}"
 
 echo "==> callbacks (auth'd, self-referential egress)"
 CB="http://127.0.0.1:$HTTP/callback"
-check_contains "http callback ok"   '"ok": true'    "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"http\",\"url\":\"http://127.0.0.1:$HTTP/generate_204\"}"
-check_contains "http callback 204"  '"status": 204' "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"http\",\"url\":\"http://127.0.0.1:$HTTP/generate_204\"}"
+# The self-referential http egress re-enters a gated route, so the spec carries
+# the Bearer token in its own request headers.
+CB_HTTP="{\"kind\":\"http\",\"url\":\"http://127.0.0.1:$HTTP/generate_204\",\"headers\":{\"Authorization\":\"Bearer $TOKEN\"}}"
+check_contains "http callback ok"   '"ok": true'    "$CB" "${AUTH[@]}" -X POST -d "$CB_HTTP"
+check_contains "http callback 204"  '"status": 204' "$CB" "${AUTH[@]}" -X POST -d "$CB_HTTP"
 check_contains "tcp callback echo"  '"response": "cb"' "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"tcp\",\"host\":\"127.0.0.1\",\"port\":$TCP,\"data\":\"cb\"}"
 check_contains "udp callback echo"  '"response": "cb"' "$CB" "${AUTH[@]}" -X POST -d "{\"kind\":\"udp\",\"host\":\"127.0.0.1\",\"port\":$UDP,\"data\":\"cb\"}"
 check_contains "ping callback ok"   '"ok": true'    "$CB" "${AUTH[@]}" -X POST -d '{"kind":"ping","host":"127.0.0.1","count":1}'
@@ -147,7 +158,7 @@ rm -f "${LOG}.noauth"
 
 echo "==> https"
 check_contains "GET https /"          "OK" "https://127.0.0.1:$HTTPS/"
-check_status   "GET https /generate_500" 500 "https://127.0.0.1:$HTTPS/generate_500"
+check_status   "GET https /generate_500" 500 "https://127.0.0.1:$HTTPS/generate_500" "${AUTH[@]}"
 
 echo "==> tcp/udp echo"
 tcp_reply=$(printf 'ping-tcp' | nc -w1 127.0.0.1 "$TCP" || true)

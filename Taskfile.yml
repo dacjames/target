@@ -71,6 +71,12 @@ tasks:
     cmds:
       - docker run --rm -it {{.PORTS}} --name target -e TARGET_LOG=debug {{.IMAGE}}
 
+  docker:run:auth:
+    desc: Run the container in the foreground (Ctrl-C to stop)
+    deps: [docker:build]
+    cmds:
+      - docker run --rm -it {{.PORTS}} --name target -e TARGET_LOG=debug -e TARGET_AUTH=true {{.IMAGE}}
+
   docker:stop:
     desc: Stop a detached container started by docker:run
     cmds:

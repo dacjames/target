@@ -89,8 +89,9 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Optional JWT auth. When enabled it gates /callback; when disabled,
-	// /callback is turned off (see callback.go).
+	// Optional JWT auth. When enabled it gates all HTTP/HTTPS routes (health
+	// probes exempt) via authMiddleware; when disabled, /callback is turned off
+	// (see http.go, callback.go).
 	if truthy(os.Getenv(envAuth)) {
 		lifetime := defaultAuthLifetime
 		if v := os.Getenv(envAuthLifetime); v != "" {
@@ -105,7 +106,7 @@ func run() int {
 			lg.errorf("auth: %v", err)
 			return 1
 		}
-		lg.infof("auth enabled (lifetime %s); /callback requires a Bearer token", lifetime)
+		lg.infof("auth enabled (lifetime %s); all HTTP routes require a Bearer token (health probes exempt); /callback mandatory", lifetime)
 		go authenticator.rotate(ctx, lg)
 	} else {
 		lg.infof("auth disabled; /callback endpoint disabled")

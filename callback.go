@@ -266,16 +266,11 @@ func pingCallback(ctx context.Context, spec callbackSpec) callbackResult {
 // body (ok=false) with HTTP 200 — only a bad request (wrong method, malformed
 // body) uses a 4xx status.
 func callback(w http.ResponseWriter, r *http.Request) {
-	// Auth gates this endpoint and only this endpoint. Disabled auth => the
-	// endpoint does not exist; enabled auth => a valid Bearer token is required.
+	// Auth is mandatory here: with auth disabled the endpoint does not exist.
+	// When enabled, authMiddleware has already verified the Bearer token before
+	// this handler runs (/callback is not health-exempt).
 	if authenticator == nil {
 		http.NotFound(w, r)
-		return
-	}
-	if err := authenticator.verifyRequest(r); err != nil {
-		w.Header().Set("WWW-Authenticate", "Bearer")
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprintf(w, "unauthorized: %v\n", err)
 		return
 	}
 	if r.Method != http.MethodPost {

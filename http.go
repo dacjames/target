@@ -43,7 +43,7 @@ func startHTTP(lg *logger, name string, t *HTTPTarget) (*http.Server, error) {
 
 	bindHost, _, _ := net.SplitHostPort(addr)
 	info := listenerInfo{Name: name, BindIP: bindHost, Port: t.Port, Interface: t.Listen.Interface}
-	srv := &http.Server{Addr: addr, Handler: handler(lg, info)}
+	srv := &http.Server{Addr: addr, Handler: authMiddleware(handler(lg, info))}
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -78,6 +78,33 @@ func startHTTP(lg *logger, name string, t *HTTPTarget) (*http.Server, error) {
 		}
 	}()
 	return srv, nil
+}
+
+// authExempt reports whether a route stays open without a token even when auth
+// is enabled: the health/liveness probes, so k8s/LB checks keep working.
+func authExempt(path string) bool {
+	switch path {
+	case "/", "/healthz", "/livez", "/readyz", "/ping":
+		return true
+	}
+	return false
+}
+
+// authMiddleware gates every route on HTTP/HTTPS listeners when auth is enabled,
+// except the health/liveness probes. When auth is disabled it is a pass-through;
+// routes like /callback still enforce their own mandatory rules.
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if authenticator != nil && !authExempt(r.URL.Path) {
+			if err := authenticator.verifyRequest(r); err != nil {
+				w.Header().Set("WWW-Authenticate", "Bearer")
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprintf(w, "unauthorized: %v\n", err)
+				return
+			}
+		}
+		next(w, r)
+	}
 }
 
 // handler dispatches by path. A single handler (not ServeMux routes) is used
